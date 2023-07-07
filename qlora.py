@@ -19,9 +19,9 @@ import transformers
 from torch.nn.utils.rnn import pad_sequence
 import argparse
 from transformers import (
-    AutoTokenizer, 
-    AutoModelForCausalLM, 
-    set_seed, 
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    set_seed,
     Seq2SeqTrainer,
     BitsAndBytesConfig,
     LlamaTokenizerFast
@@ -163,7 +163,7 @@ class TrainingArguments(transformers.Seq2SeqTrainingArguments):
     optim: str = field(default='paged_adamw_32bit', metadata={"help": 'The optimizer to be used'})
     per_device_train_batch_size: int = field(default=1, metadata={"help": 'The training batch size per GPU. Increase for better speed.'})
     gradient_accumulation_steps: int = field(default=16, metadata={"help": 'How many gradients to accumulate before to perform an optimizer step'})
-    max_steps: int = field(default=10000, metadata={"help": 'How many optimizer update steps to take'})
+    max_steps: int = field(default=1000000, metadata={"help": 'How many optimizer update steps to take'})
     weight_decay: float = field(default=0.0, metadata={"help": 'The L2 weight decay rate of AdamW'}) # use lora dropout instead for regularization if needed
     learning_rate: float = field(default=0.0002, metadata={"help": 'The learnign rate'})
     remove_unused_columns: bool = field(default=False, metadata={"help": 'Removed unused columns. Needed to make this codebase work.'})
@@ -175,8 +175,8 @@ class TrainingArguments(transformers.Seq2SeqTrainingArguments):
     logging_steps: int = field(default=10, metadata={"help": 'The frequency of update steps after which to log the loss'})
     group_by_length: bool = field(default=True, metadata={"help": 'Group sequences into batches with same length. Saves memory and speeds up training considerably.'})
     save_strategy: str = field(default='steps', metadata={"help": 'When to save checkpoints'})
-    save_steps: int = field(default=250, metadata={"help": 'How often to save a model'})
-    save_total_limit: int = field(default=40, metadata={"help": 'How many checkpoints to save before the oldest is overwritten'})
+    save_steps: int = field(default=10, metadata={"help": 'How often to save a model'})
+    save_total_limit: int = field(default=100, metadata={"help": 'How many checkpoints to save before the oldest is overwritten'})
 
 @dataclass
 class GenerationArguments:
@@ -198,17 +198,17 @@ class GenerationArguments:
     num_beams: Optional[int] = field(default=1)
     num_beam_groups: Optional[int] = field(default=1)
     penalty_alpha: Optional[float] = field(default=None)
-    use_cache: Optional[bool] = field(default=True) 
+    use_cache: Optional[bool] = field(default=True)
 
     # Hyperparameters for logit manipulation
     temperature: Optional[float] = field(default=1.0)
     top_k: Optional[int] = field(default=50)
     top_p: Optional[float] = field(default=1.0)
     typical_p: Optional[float] = field(default=1.0)
-    diversity_penalty: Optional[float] = field(default=0.0) 
-    repetition_penalty: Optional[float] = field(default=1.0) 
+    diversity_penalty: Optional[float] = field(default=0.0)
+    repetition_penalty: Optional[float] = field(default=1.0)
     length_penalty: Optional[float] = field(default=1.0)
-    no_repeat_ngram_size: Optional[int] = field(default=0) 
+    no_repeat_ngram_size: Optional[int] = field(default=0)
 
 def find_all_linear_names(args, model):
     cls = bnb.nn.Linear4bit if args.bits == 4 else (bnb.nn.Linear8bitLt if args.bits == 8 else torch.nn.Linear)
@@ -398,9 +398,9 @@ class DataCollatorForCausalLM(object):
         )
         # Build the input and labels for causal LM
         input_ids = []
-        labels = [] 
+        labels = []
         for tokenized_source, tokenized_target in zip(
-            tokenized_sources_with_prompt['input_ids'], 
+            tokenized_sources_with_prompt['input_ids'],
             tokenized_targets['input_ids']
         ):
             if not self.predict_with_generate:
@@ -519,10 +519,10 @@ def make_data_module(tokenizer: transformers.PreTrainedTokenizer, args) -> Dict:
     elif args.dataset == 'longform':
         dataset = load_dataset("akoksal/LongForm")
     elif args.dataset == 'my-data':
-        dataset = load_dataset("json", data_files="conversations.json")
+        dataset = load_dataset("json", data_files="convgru_small.json")
         dataset = dataset.map(lambda x: {
-        'input': '### Instruction: '+ x['question'],
-        'output': '### Response: '+ x['answer']
+            'input': f"### Instruction: Answer following question related to onepetro articles: {x['question']}",
+        'output': f'### Response: {x["answer"]}'
         }, remove_columns=['question', 'answer'])
     else:
         raise NotImplementedError(f"Dataset {args.dataset} not implemented yet.")
@@ -549,14 +549,14 @@ def make_data_module(tokenizer: transformers.PreTrainedTokenizer, args) -> Dict:
             train_dataset = train_dataset.map(lambda x: {'length': len(x['input']) + len(x['output'])})
 
     data_collator = DataCollatorForCausalLM(
-        tokenizer=tokenizer, 
+        tokenizer=tokenizer,
         source_max_len=args.source_max_len,
         target_max_len=args.target_max_len,
         train_on_source=args.train_on_source,
         predict_with_generate=args.predict_with_generate,
     )
     return dict(
-        train_dataset=train_dataset if args.do_train else None, 
+        train_dataset=train_dataset if args.do_train else None,
         eval_dataset=eval_dataset if args.do_eval else None,
         predict_dataset=eval_dataset if args.do_predict else None,
         data_collator=data_collator
@@ -586,7 +586,7 @@ def train():
     args = argparse.Namespace(
         **vars(model_args), **vars(data_args), **vars(training_args)
     )
-    
+
 
     checkpoint_dir, completed_training = get_last_checkpoint(args.output_dir)
     if completed_training:
@@ -618,7 +618,7 @@ def train():
         # Check and add them if missing to prevent them from being parsed into different tokens.
         # Note that these are present in the vocabulary. 
         # Note also that `model.config.pad_token_id` is 0 which corresponds to `<unk>` token.
-        if tokenizer.eos_token_id != model.config.eos_token_id or tokenizer.pad_token_id != model.config.pad_token_id or tokenizer.unk_token_id != model.config.unk_token_id:
+        if tokenizer.eos_token_id != model.config.eos_token_id or tokenizer.pad_token_id != model.config.pad_token_id:
             tokenizer.add_special_tokens(
                 {
                     "eos_token": tokenizer.convert_ids_to_tokens(model.config.eos_token_id),
@@ -629,7 +629,7 @@ def train():
 
     data_module = make_data_module(tokenizer=tokenizer, args=args)
     trainer = Seq2SeqTrainer(
-        model=model, 
+        model=model,
         tokenizer=tokenizer,
         args=training_args,
         **{k:v for k,v in data_module.items() if k != 'predict_dataset'},
@@ -680,7 +680,7 @@ def train():
                         preds.append(torch.argmax(logit_abcd).item())
                     labels = labels[labels != IGNORE_INDEX].view(-1, 2)[:,0]
                     refs += [abcd_idx.index(label) for label in labels.tolist()]
-                    
+
                     loss_mmlu += loss.item()
                 # Extract results by subject.
                 results = {'mmlu_loss':loss_mmlu/len(data_loader)}

@@ -2,10 +2,13 @@ import torch
 from peft import PeftModel    
 from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer, StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
 
-model_name = "TheBloke/wizardLM-13B-1.0-fp16"
-adapters_name = './output/checkpoint-2250/adapter_model'
+model_name = "lmsys/vicuna-7b-v1.3"
+adapters_name = './output/checkpoint-10500/adapter_model'
 
 print(f"Starting to load the model {model_name} into memory")
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 m = AutoModelForCausalLM.from_pretrained(
     model_name,
@@ -285,6 +288,6 @@ with gr.Blocks(
     )
     clear.click(lambda: None, None, chatbot, queue=False)
 
-demo.queue(max_size=128, concurrency_count=2)
+demo.queue(max_size=128, concurrency_count=1)
 
-demo.launch(server_name='0.0.0.0')
+demo.launch(server_name='0.0.0.0', share=False)
